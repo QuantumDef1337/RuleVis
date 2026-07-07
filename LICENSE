@@ -1,6 +1,15 @@
 MIT License
 
-Copyright (c) 2025 Zafer Balkan
+This project began as a fork of RuleVis by Zafer Balkan
+(https://github.com/zbalkan/rulevis) and retains substantial portions of its
+original rule-parsing and graph-analysis code. It has since been extended
+with a multi-tenant RBAC platform, security hardening, integrations, and a
+new frontend by QuantumDef1337. Both copyright notices are retained below
+as required by the original MIT license.
+
+Copyright (c) 2025 Zafer Balkan (original RuleVis project)
+Copyright (c) 2026 QuantumDef1337 (multi-tenant platform, RBAC, security
+hardening, integrations, and frontend)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -1,142 +1,153 @@
-# RuleVis: Interactive Wazuh Rule Graph Explorer
+# RuleVis — Multi-Tenant Rule Intelligence Platform for Wazuh
 
-RuleVis is a powerful analysis tool that transforms your Wazuh ruleset into a dynamic, interactive force-directed graph. It helps you visualize the complex relationships between rules, identify critical dependencies, discover structural issues, and analyze the distribution of your rule IDs.
+RuleVis turns your Wazuh ruleset into a dynamic, interactive dependency graph — and wraps it in a full multi-tenant platform: RBAC, MFA, audit logging, live Wazuh/GitHub sync, webhooks, a public API, and OIDC single sign-on. It helps security teams visualize rule relationships, catch structural issues, track MITRE ATT&CK and compliance coverage, and manage rule changes with a real audit trail — across as many isolated tenant workspaces as you need.
 
-This tool is designed for security engineers, SOC analysts, and Wazuh administrators who need to understand, maintain, and develop complex custom rulesets.
+Built for SOC analysts (understand what a rule actually does and why), SOC managers (health/coverage reporting, change auditing), and platform engineers (multi-tenant administration, integrations).
 
-![General View of RuleVis](https://github.com/zbalkan/rulevis/raw/master/assets/general-view.gif)
+![Home dashboard](assets/dashboard.png)
 
 ## Features
 
-* **Interactive Graph Visualization:** Renders your entire ruleset as a graph using D3.js and HTML Canvas for high performance.
-* **Dependency Analysis:** Clearly shows parent-child relationships (`if_sid`, `if_group`, etc.) with directed edges.
-* **Node Expansion:** Interactively expand nodes to reveal their parent or child dependencies on demand.
-* **Detailed Rule Information:** Click on any rule to see its full description, groups, and a complete list of its parents and children.
-* **Powerful Search:** Instantly find and focus on any rule by its ID.
-* **Graph Statistics Panel:** Get at-a-glance insights into your ruleset with statistics like:
-  * Top 5 rules with the most direct children (foundational rules).
-  * Top 5 rules with the highest impact (most total descendants).
-  * Top 5 rules with the most complex dependencies.
-  * A list of isolated rules.
-  * Cycles in the rules
-* **Rule ID Heatmap:** Visualize the entire rule ID space from 0 to 100,000+ to see which ID ranges are heavily used and which are available for custom rules.
-* **Keyboard Shortcuts:** Pause the simulation (`Space`), close panels (`Esc`), and more for an efficient workflow.
-* **Focus:** By default, when a node is highlighted, any node except for the selected node and its neighbords are dimmed. That allows better focus minimizing visual complexity.
+### Rule intelligence
+* **Interactive graph visualization** — force, hierarchical, and radial layouts, rendered on Canvas for performance at scale.
+* **Rule detail panel** — a plain-English breakdown of any rule: severity, parent rules, sub-rules, and every condition that has to match for the alert to fire, laid out top to bottom.
+* **Dependency analysis** — parent/child relationships (`if_sid`, `if_group`, `if_matched_sid`, `if_matched_group`) as directed edges, with broken-dependency and duplicate-ID detection.
+* **Rule health dashboard** — disabled parent rules, orphan rules, MITRE ATT&CK coverage, compliance-tag coverage, dependency-chain depth.
+* **Rule ID heatmap** — see which ID ranges are heavily used and which are free for new custom rules.
+* **Compare** — diff two rule sets or manager snapshots.
+* **Product mapping** — organize rule files into logical products (e.g. "Windows," "FortiGate") with per-product rule counts.
 
-## The Problem It Solves
+![Rule Visualizer](assets/visualizer.png)
 
-Wazuh's rule engine builds a complex, tree-like structure in memory. While powerful, this structure is invisible to the user. It can be difficult to:
+### Multi-tenancy & access control
+* **Isolated tenant workspaces** — each with its own rules, products, managers, GitHub sources, webhooks, and members.
+* **RBAC** — `tenant_admin` / `analyst` / `viewer` roles, plus per-user permission overrides for one-off exceptions, plus a platform-wide super-admin layer.
+* **Direct or invite-based user creation** — username, optional email, password, role, permission overrides, force-password-reset, and require-MFA-enrollment, all from one form.
 
-* Understand the full impact of changing a single rule.
-* Find redundant rules or overly complex dependency chains.
-* Identify structural issues like circular dependencies, which can impact performance.
-* Know which ID ranges are safe to use for new custom rules.
+![Team & access](assets/settings-team.png)
 
-RuleVis makes these invisible structures visible, turning abstract XML files into a tangible, explorable map.
+### Security
+* **TOTP-based MFA** with QR enrollment and single-use backup codes.
+* **Account lockout** and **per-IP login rate limiting** (the latter backed by the database, not an in-process counter — it holds up under multiple worker processes or hosts).
+* **Secrets encrypted at rest** — Wazuh manager passwords and GitHub tokens are Fernet-encrypted before they ever touch disk.
+* **Audit log & deletion log** — every administrative action, with actor, IP address, and (for rule syncs) a full added/removed/changed diff.
+* **Login activity monitoring** with suspicious-activity flagging.
+* **OIDC single sign-on** — works with Okta, Azure AD/Entra ID, Google Workspace, Auth0, Keycloak, or any standard OIDC identity provider.
+
+### Integrations
+* **Live Wazuh manager sync** — connect a manager's REST API, sync on demand or automatically on an interval, with full change diffing on every sync.
+* **GitHub source sync** — pull rule files directly from a repository, public or private.
+* **Webhooks** — push rule-change and deletion events to Slack, Microsoft Teams, or any JSON endpoint (ServiceNow, Jira, n8n, custom), HMAC-signed.
+* **Public API** — scoped, revocable API keys for programmatic access, one tenant and one role per key.
+
+![Workspace settings](assets/settings-workspace.png)
 
 ## Installation
 
-### Using pipx (recommended)
+```shell
+git clone https://github.com/QuantumDef1337/RuleVis.git
+cd RuleVis
+pip install .
+```
 
-`pipx install rulevis`
+All dependencies (Flask, networkx, waitress, SQLAlchemy, cryptography, python-jose) install automatically via `pyproject.toml` — no manual dependency wrangling, on Windows, Linux, or macOS. The frontend ships pre-built (`src/internal/static/dist/`), so **no Node.js is required** just to run the app.
 
-### Using pip (for testing)
+Only needed if you point RuleVis at Postgres instead of the default SQLite (see below):
 
-`pip install rulevis`
-
-### Using source
-
-1. **Clone the repository:**
-
-    ```shell
-    git clone https://github.com/zbalkan/rulevis.git
-    cd rulevis
-    ```
-
-2. **Create and activate a Python virtual environment:**
-
-    ```shell
-    python -m venv .venv
-    source .venv/bin/activate
-    ```
-
-    Or for Windows
-
-    ```shell
-    python -m venv .venv
-    source .venv\Scripts\activate.ps1
-    ```
-
-3. **Install dependencies:**
-
-    ```shell
-    pip install -r requirements.txt
-    ```
+```shell
+pip install .[postgres]
+```
 
 ## Usage
 
-The tool is run from the command line. You must provide the path to the directory (or directories) containing your Wazuh rule XML files.
-
 ```shell
-python src/rulevis.py --path /var/ossec/ruleset/rules,/var/ossec/etc/rules
+rulevis
 ```
 
-**Arguments:**
+This starts the server, opens your default browser to `http://localhost:5000/`, and walks you through creating the first administrator account. From there, everything — connecting rule sources, creating tenants, inviting users — happens in the app.
 
-* `--path, -p`: **(Required)** A comma-separated list of paths to your Wazuh rule directories. This should include both the default rules and your custom rules.
-* `-h, --help`: Show the help message.
+You can optionally seed the first tenant from local rule directories at startup:
 
-Once executed, the script will:
+```shell
+rulevis --path /var/ossec/ruleset/rules,/var/ossec/etc/rules
+```
 
-1. Parse all `.xml` files in the specified paths.
-2. Build a graph model of the rule relationships.
-3. Pre-calculate statistics and heatmap data.
-4. Start a local web server.
-5. Automatically open the tool in your default web browser.
+![Login](assets/login.png)
 
-## Key Features in Action
+## Database
 
-### Graph Statistics
+By default RuleVis uses a local SQLite file at `~/.rulevis/rulevis.db` — zero configuration, works out of the box. For a multi-process or multi-host deployment, point it at Postgres instead:
 
-Quickly identify the most important and complex rules in your entire ruleset. Click on any rule in the list to instantly navigate to it in the main graph.
+```shell
+export RULEVIS_DATABASE_URL="postgresql+psycopg2://user:pass@host/rulevis"
+```
 
-![Statistics Panel](https://github.com/zbalkan/rulevis/raw/master/assets/stats-panel.gif)
+Every query in the identity/authz layer is written to be portable across both backends.
 
-### Rule ID Heatmap
+## Rebuilding the frontend
 
-Get a bird's-eye view of your rule ID landscape. Dark gray blocks are unused and available for your custom rules, while brighter red blocks indicate heavily populated ranges. This is invaluable for planning and organizing a large custom ruleset.
+Only needed if you're changing `web/src` — running RuleVis itself does not require this.
 
-![Heatmap View](https://github.com/zbalkan/rulevis/raw/master/assets/heatmap-view.gif)
+```shell
+cd web
+npm install
+npm run build     # outputs to ../src/internal/static/dist/
+```
 
-## Technical Overview
+## Data locations
 
-The project is composed of three main Python modules and a JavaScript frontend:
+All application data lives under `~/.rulevis/`:
 
-1. **`generator.py`:** Parses the Wazuh XML rule files and uses the `networkx` library to build a `MultiDiGraph` object representing the rule relationships. It saves this graph to a temporary file.
-2. **`analyzer.py`:** Loads the graph file and uses `networkx` to perform complex calculations (descendants, ancestors, etc.). It pre-calculates the data needed for the Statistics Panel and the Rule ID Heatmap and saves them to temporary JSON files.
-3. **`visualizer.py`:** A Flask web application that serves the frontend and provides a clean API for the visualization to fetch graph, stats, and heatmap data.
-4. **`graph.js`:** The core frontend logic. It uses **D3.js** for the force simulation and user interactions, and renders the main graph to an **HTML Canvas** for high performance. The interactive heatmap is rendered using **SVG** for its superior event handling and styling capabilities.
-
-Here’s a **ready-to-paste README subsection** that explains `rulevis` logging clearly and professionally for your users. It assumes the per-user setup you’ve implemented.
-
----
+| Path | Contents |
+|---|---|
+| `rulevis.db` | Identity/authz — users, tenants, roles, audit log (or your external DB, if configured) |
+| `secret_key` | Session-signing key, generated once on first run |
+| `tenants/<id>/config.json` | Per-tenant products, managers, GitHub sources, webhooks, SSO config |
+| `tenants/<id>/cache/<manager_id>/` | Rule files mirrored from a connected Wazuh manager |
+| `tenants/<id>/cache/gh-<source_id>/` | Rule files mirrored from a GitHub source |
+| `tenants/<id>/uploads/` | Manually uploaded rule XML |
 
 ## Logging
 
-`rulevis` automatically writes diagnostic and operational logs to a user-specific location. Logs are plain text encoded in UTF-8 and include timestamps, module names, and severity levels. The application creates its log directory if it does not exist.
+RuleVis writes diagnostic logs to a user-specific location, following OS conventions:
 
-| Platform        | Log file location                                                                           | Example path                                             |
-| --------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Windows     | `%LocalAppData%\rulevis\Logs\rulevis.log`                                                   | `C:\Users\<user>\AppData\Local\rulevis\Logs\rulevis.log` |
-| macOS       | `~/Library/Logs/rulevis/rulevis.log`                                                        | `/Users/<user>/Library/Logs/rulevis/rulevis.log`         |
-| Linux / BSD | `$XDG_STATE_HOME/rulevis/rulevis.log` or fallback `~/.local/share/rulevis/logs/rulevis.log` | `/home/<user>/.local/state/rulevis/rulevis.log`          |
+| Platform | Log file location |
+|---|---|
+| Windows | `%LocalAppData%\rulevis\Logs\rulevis.log` |
+| macOS | `~/Library/Logs/rulevis/rulevis.log` |
+| Linux / BSD | `$XDG_STATE_HOME/rulevis/rulevis.log` (fallback `~/.local/share/rulevis/logs/rulevis.log`) |
 
-`rulevis` follows the [XDG Base Directory specification](https://specifications.freedesktop.org/basedir-spec/latest/) on Unix-like systems and Windows conventions under `%LocalAppData%`.
+Safe to delete — a new one is created automatically on the next run.
 
-The log file records informational messages, warnings, and errors emitted during execution. You can safely delete it; a new one will be created automatically on the next run.
+## Testing
 
-## Notes
+```shell
+pip install .[dev]
+pytest tests/
+```
 
-While the documentation defines <if_level> as another condition creating a parent-child relationship, it has not been used in any built-in rules. And as a personal choicem I decided to omit that deliberately.
+Every test runs against an isolated, throwaway database (redirects `HOME`/`USERPROFILE` to a temp directory per test) — nothing touches real data.
 
-There is another `if`, called `<if_fts>`, that is used for *first time seen* events, not creating a parent-child relationship. Theefore it is not mentioned.
+## Architecture
+
+- **Backend**: Flask, served via [waitress](https://github.com/Pylons/waitress) in production.
+- **Identity/authz**: SQLAlchemy Core over SQLite or Postgres.
+- **Per-tenant config**: flat JSON on disk, unchanged in shape from the original single-tenant design.
+- **Graph engine**: [networkx](https://networkx.org/) `MultiDiGraph` — rules are nodes, `if_sid`/`if_matched_sid`/`if_group`/`if_matched_group` are edges.
+- **Frontend**: React + TypeScript + Vite, built to static assets served directly by Flask.
+
+See [`docs/RULEVIS_PRODUCT_GUIDE.md`](docs/RULEVIS_PRODUCT_GUIDE.md) for the full architecture reference, data model, module-by-module breakdown, and design rationale behind every major feature.
+
+## Notes on rule condition parsing
+
+While the Wazuh documentation defines `<if_level>` as another condition that creates a parent-child relationship, it isn't used in any built-in rules and is deliberately omitted here.
+
+`<if_fts>` (*first time seen*) is also intentionally not treated as a parent-child relationship, since it doesn't create one.
+
+## Acknowledgments
+
+RuleVis began as a fork of [zbalkan/rulevis](https://github.com/zbalkan/rulevis) by Zafer Balkan, which introduced the core rule-parsing engine and force-directed graph visualization. This project builds substantially on that foundation — see [`LICENSE`](LICENSE) for the full attribution.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

@@ -4,16 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rulevis"
-version = "1.0.4"
-description = "Interactive Wazuh Rule Graph Explorer"
+version = "2.0.0"
+description = "Multi-tenant rule intelligence platform for Wazuh — RBAC, MFA, live sync, audit logging, webhooks, and OIDC SSO on top of an interactive rule dependency graph"
 readme = "README.md"
 requires-python = ">=3.9"
 
 license = "MIT"
 license-files = ["LICEN[CS]E*"]
 
-authors = [{ name = "Zafer Balkan", email = "zafer@zaferbalkan.com" }]
-keywords = ["wazuh", "detection", "security", "monitoring", "logging", "siem"]
+authors = [
+    { name = "Zafer Balkan", email = "zafer@zaferbalkan.com" },
+    { name = "QuantumDef1337" },
+]
+keywords = ["wazuh", "detection", "security", "monitoring", "logging", "siem", "rbac", "multi-tenant"]
 classifiers = [
     "Topic :: Security",
     "Topic :: System :: Logging",
@@ -44,9 +47,10 @@ dev = ["pytest"]
 postgres = ["psycopg2-binary"]
 
 [project.urls]
-Homepage = "https://github.com/zbalkan/rulevis"
-Repository = "https://github.com/zbalkan/rulevis"
-Issues = "https://github.com/zbalkan/rulevis/issues"
+Homepage = "https://github.com/QuantumDef1337/RuleVis"
+Repository = "https://github.com/QuantumDef1337/RuleVis"
+Issues = "https://github.com/QuantumDef1337/RuleVis/issues"
+OriginalProject = "https://github.com/zbalkan/rulevis"
 
 [project.scripts]
 rulevis = "rulevis:main"

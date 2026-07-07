@@ -10,20 +10,26 @@ class Analyzer:
     """
     Analyzes a graph from a pickle file and calculates key statistics.
     """
-    def __init__(self, graph_path: str) -> None:
+    def __init__(self, graph_path: str = "", graph: MultiDiGraph | None = None) -> None:
         """
-        Initializes the Analyzer with the path to the graph file.
+        Initializes the Analyzer with either a path to a pickled graph or an
+        in-memory graph object.
 
         Args:
             graph_path (str): The path to the .gpickle file.
+            graph (MultiDiGraph): An already-loaded graph (takes precedence).
 
         Raises:
-            FileNotFoundError: If the graph file does not exist.
+            FileNotFoundError: If neither a graph nor a valid path is given.
         """
+        if graph is not None:
+            self.graph_path = graph_path
+            self.G: MultiDiGraph = graph
+            return
         if not os.path.isfile(graph_path):
             raise FileNotFoundError(f"Graph file not found: {graph_path}")
         self.graph_path = graph_path
-        self.G: MultiDiGraph = self._load_graph()
+        self.G = self._load_graph()
 
     def _load_graph(self) -> MultiDiGraph:
         """Loads the graph from the pickle file."""
@@ -54,7 +60,8 @@ class Analyzer:
 
         isolated_rules = [
             n for n in real_nodes
-            if self.G.out_degree(n) == 0 and list(self.G.predecessors(n)) == ['0']
+            if self.G.out_degree(n) == 0
+            and set(self.G.predecessors(n)) <= {'0'}
         ]
 
         # 1. Find all nodes with self-loops first. This is our definitive list.

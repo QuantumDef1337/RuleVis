@@ -31,7 +31,17 @@ classifiers = [
 dependencies = [
     "Flask>=3.0.0",
     "networkx",
+    "waitress",
+    "SQLAlchemy>=2.0",
+    "cryptography",
+    "python-jose",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+# Only needed if RULEVIS_DATABASE_URL points at Postgres — SQLite (the
+# zero-config default) needs no extra driver.
+postgres = ["psycopg2-binary"]
 
 [project.urls]
 Homepage = "https://github.com/zbalkan/rulevis"

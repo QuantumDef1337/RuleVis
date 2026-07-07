@@ -7,15 +7,19 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+# Anchored to repo root (leading /) — an unanchored "dist/"/"build/" would
+# also match src/internal/static/dist/, which is the committed, pre-built
+# frontend the Flask backend serves. That directory must stay tracked so a
+# fresh clone works without requiring Node.js on the install machine.
 .Python
-build/
+/build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -131,9 +135,20 @@ dmypy.json
 # PyCharm
 .idea/
 
+# Claude Code local tooling config (machine-specific, not part of the product)
+.claude/
+
 # Visual studio
 .vs/
 .vscode/
+
+# Node.js / frontend (web/) — never commit these; the built output that
+# matters (src/internal/static/dist/) is generated from web/src and IS
+# committed so end users don't need Node.js at all.
+node_modules/
+web/dist/
+*.tsbuildinfo
+npm-debug.log*
 
 # Project specific excludes
 /out

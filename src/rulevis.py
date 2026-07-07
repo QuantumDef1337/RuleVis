@@ -5,18 +5,16 @@ import logging
 import os
 import re
 import sys
-import tempfile
 import webbrowser
 from threading import Timer
 from typing import Final
 
-from internal.analyzer import Analyzer
-from internal.generator import GraphGenerator
 from internal.visualizer import create_app
 
 APP_NAME: Final[str] = 'rulevis'
-DESCRIPTION: Final[str] = f"{APP_NAME} is a Wazuh rule visualization tool."
+DESCRIPTION: Final[str] = f"{APP_NAME} is a Wazuh rule visualization platform."
 ENCODING: Final[str] = "utf-8"
+PORT: Final[int] = 5000
 
 # Precompiled regex to remove ANSI color/control sequences
 ANSI_ESCAPE_RE: re.Pattern[str] = re.compile(
@@ -48,75 +46,34 @@ class CustomFileHandler(logging.FileHandler):
 class Rulevis():
 
     def __init__(self, paths: list[str]) -> None:
-        self.graph_path: str = tempfile.NamedTemporaryFile(delete=False).name
-        logging.info(f"Temporary graph file created at {self.graph_path}")
-
-        self.stats_path: str = tempfile.NamedTemporaryFile(delete=False).name
-        logging.info(f"Temporary stats file created at {self.stats_path}")
-
-        self.heatmap_path: str = tempfile.NamedTemporaryFile(delete=False).name
-        logging.info(f"Temporary heatmap file created at {self.heatmap_path}")
-
         self.__validate_paths(paths)
         self.__paths: list[str] = paths
 
-    def __del__(self) -> None:
-        try:
-            if hasattr(self, 'graph_path') and os.path.exists(self.graph_path):
-                os.remove(self.graph_path)
-                logging.info(
-                    f"Temporary graph file {self.graph_path} deleted.")
-        except Exception:
-            ...
-
-        try:
-            if hasattr(self, 'stats_path') and os.path.exists(self.stats_path):
-                os.remove(self.stats_path)
-                logging.info(
-                    f"Temporary stats file {self.stats_path} deleted.")
-        except Exception:
-            ...
-
-        try:
-            if hasattr(self, 'heatmap_path') and os.path.exists(self.heatmap_path):
-                os.remove(self.heatmap_path)
-                logging.info(
-                    f"Temporary heatmap file {self.heatmap_path} deleted.")
-        except Exception:
-            ...
-
     def run(self) -> None:
-        self.__generate_graph()
-        self.__generate_stats()
-        self.__run_flask_app()
+        app = create_app(self.__paths)
+        Timer(1, self.__open_browser).start()
+        try:
+            from waitress import serve
+            # Flask's built-in server prints its own "do not use in
+            # production" warning — waitress is a real (if modest) WSGI
+            # server: multi-threaded, no dev-reloader, safe to leave running.
+            logging.info("Starting server (waitress)...")
+            serve(app, port=PORT, threads=8)
+        except ImportError:
+            logging.warning(
+                "waitress is not installed — falling back to Flask's development "
+                "server. Run 'pip install waitress' for a production-appropriate server.")
+            app.run(debug=False, use_reloader=False, port=PORT, threaded=True)
 
     def __validate_paths(self, paths: list[str]) -> None:
         for path in paths:
-            if not os.path:
+            if not os.path.isdir(path):
                 logging.error(f"Invalid directory path: {path}", exc_info=True)
+                print(f"ERROR: Invalid directory path: {path}")
                 sys.exit(1)
 
-    def __generate_graph(self) -> None:
-        logging.info("Generating rule graph...")
-        generator = GraphGenerator(paths=self.__paths, graph_file=self.graph_path)
-        generator.build_graph_from_xml()
-        generator.save_graph()
-        logging.info("Graph generation complete.")
-
-    def __generate_stats(self) -> None:
-        logging.info("Generating rule stats...")
-        analyzer = Analyzer(self.graph_path)
-        analyzer.write_to_json(self.stats_path, self.heatmap_path)
-        logging.info("Stats generation complete.")
-
-    def __run_flask_app(self) -> None:
-        app = create_app(self.graph_path, self.stats_path, self.heatmap_path)
-        logging.info("Starting Flask app...")
-        Timer(1, self.__open_browser).start()
-        app.run(debug=False, use_reloader=False)
-
-    def __open_browser(self, ) -> None:
-        new_url = 'http://localhost:5000/'
+    def __open_browser(self) -> None:
+        new_url = f'http://localhost:{PORT}/'
 
         if (webbrowser.get().name != 'gio'):
             webbrowser.open_new(new_url)
@@ -126,17 +83,19 @@ class Rulevis():
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog=APP_NAME, description=DESCRIPTION)
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(1)
 
-    parser.add_argument("--path", "-p", dest="path", required=True, type=str,
-                        help="Path to the Wazuh rule directories. Comma-separated multiple paths are accepted.")
+    parser.add_argument("--path", "-p", dest="path", required=False, type=str, default="",
+                        help="Path to the Wazuh rule directories. Comma-separated "
+                             "multiple paths are accepted. Optional when paths or "
+                             "Wazuh managers are already configured in the app.")
 
     args: argparse.Namespace = parser.parse_args()
     paths: list[str] = [p for p in str(args.path).split(',') if p != '']
     logging.info(f"Paths: {paths}")
 
+    # Rule sources are now per-tenant (configured in-app after login), so there's
+    # no single global config to sanity-check here; create_app() handles first-run
+    # migration + bootstrap.
     rulevis = Rulevis(paths)
     rulevis.run()
 

@@ -1,2 +1,7 @@
 Flask>=3.0.0
 networkx
+waitress
+SQLAlchemy>=2.0
+cryptography
+python-jose
+# psycopg2-binary  # uncomment if RULEVIS_DATABASE_URL points at Postgres

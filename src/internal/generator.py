@@ -1,27 +1,69 @@
+import copy
 import logging
 import os
 import pickle
 import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from typing import Final, Optional
+from typing import Any, Final, Optional
 
 import networkx as nx
 
 ENCODING: Final[str] = "utf-8"
 
-REGEX_FINDER: re.Pattern[str] = re.compile(r'<regex\s+.*?>(.*?)</regex>',
-                                           flags=re.DOTALL | re.IGNORECASE)
-REGEX_AMP: re.Pattern[str] = re.compile(r"&(?!amp;|lt;|gt;)")
+# Tags whose text may contain characters that break XML parsing (unescaped
+# & / < / > inside OS_Regex patterns). Their content is captured and replaced
+# with placeholders before parsing, then restored afterwards, so conditions
+# survive intact instead of being stripped.
+UNSAFE_FINDER: re.Pattern[str] = re.compile(
+    r'<(regex|match|prematch)(\s[^>]*)?>(.*?)</\1>',
+    flags=re.DOTALL | re.IGNORECASE)
+
+REGEX_AMP: re.Pattern[str] = re.compile(r"&(?!amp;|lt;|gt;|quot;|apos;|#)")
+
+PLACEHOLDER_TPL: Final[str] = "__RULEVIS_TXT_{}__"
+PLACEHOLDER_RE: re.Pattern[str] = re.compile(r"__RULEVIS_TXT_(\d+)__")
+
+# Wazuh rule child elements that act as matching conditions. Iteration order
+# of an ET.Element preserves document order, so conditions keep the order in
+# which they were authored in the XML.
+CONDITION_TAGS: Final[frozenset[str]] = frozenset({
+    "if_sid", "if_group", "if_matched_sid", "if_matched_group", "if_level",
+    "if_fts", "match", "regex", "decoded_as", "category", "field", "srcip",
+    "dstip", "srcport", "dstport", "user", "srcuser", "dstuser",
+    "program_name", "hostname", "id", "url", "location", "action", "status",
+    "protocol", "system_name", "data", "extra_data", "srcgeoip", "dstgeoip",
+    "weekday", "time", "list",
+})
+
+# Rule element attributes worth keeping as node metadata.
+RULE_ATTRS: Final[tuple[str, ...]] = (
+    "level", "frequency", "timeframe", "ignore", "maxsize", "noalert", "overwrite",
+)
 
 
 class GraphGenerator:
-    def __init__(self, paths: list[str], graph_file: str) -> None:
+    def __init__(self, paths: list[str], graph_file: str,
+                 product_map: Optional[dict[str, str]] = None,
+                 source: Optional[str] = None) -> None:
+        """
+        Args:
+            paths: directories to walk for rule XML files.
+            graph_file: output pickle path.
+            product_map: lowercase file basename -> product name mapping used
+                to tag each rule with the product it belongs to.
+            source: optional origin label (e.g. a manager name) stored on
+                every node, useful for multi-manager/batch analysis.
+        """
         self.paths = paths
         self.group_membership: dict[str, list[str]] = defaultdict(list)
         self.G: nx.MultiDiGraph = nx.MultiDiGraph()
         self.graph_file: str = graph_file
         self.overwrite_rules: list[tuple[ET.Element, str]] = []
+        self.duplicate_ids: list[dict[str, str]] = []
+        self.product_map: dict[str, str] = {
+            k.lower(): v for k, v in (product_map or {}).items()}
+        self.source: Optional[str] = source
 
     def get_all_xml_files(self) -> list[str]:
         xml_files: list[str] = []
@@ -64,6 +106,35 @@ class GraphGenerator:
                     self.add_edge_with_type(
                         parent_rule, rule_id, 'if_matched_group')
 
+    def extract_conditions(self, element: ET.Element) -> list[dict[str, Any]]:
+        """Ordered list of matching conditions exactly as authored in the XML."""
+        conditions: list[dict[str, Any]] = []
+        for child in element:
+            tag = child.tag.lower()
+            if tag in CONDITION_TAGS:
+                conditions.append({
+                    "tag": tag,
+                    "text": (child.text or "").strip(),
+                    "attributes": dict(child.attrib),
+                })
+        return conditions
+
+    def extract_mitre(self, element: ET.Element) -> list[str]:
+        ids: list[str] = []
+        for mitre in element.findall("mitre"):
+            for id_el in mitre.findall("id"):
+                if id_el.text:
+                    ids.append(id_el.text.strip())
+        return ids
+
+    def rule_raw_xml(self, element: ET.Element) -> str:
+        clone = copy.deepcopy(element)
+        try:
+            ET.indent(clone, space="  ")
+        except Exception:
+            ...
+        return ET.tostring(clone, encoding="unicode").strip()
+
     def parse_groups_and_rules(self, element: ET.Element, inherited_groups: list[str], xml_file: str) -> None:
         if element.tag == 'rule':
             if element.get("overwrite", "").lower() == "yes":
@@ -82,16 +153,44 @@ class GraphGenerator:
             rule_description = self.extract_rule_description(attributes)
             all_groups = self.extract_rule_groups(inherited_groups, attributes)
 
-            if self.G.nodes.get(rule_id) is not None:
+            existing = self.G.nodes.get(rule_id)
+            # A node can already exist as an empty placeholder that networkx
+            # auto-created when an EARLIER-processed rule's if_sid/if_group
+            # forward-referenced this ID before its own <rule> element was
+            # parsed (file processing order isn't dependency order). That is
+            # NOT a duplicate — it's this rule's first and only definition,
+            # and must still be filled in. Only treat it as a real duplicate
+            # once a rule with this ID has actually been fully defined
+            # (marked by the presence of "conditions").
+            if existing is not None and "conditions" in existing:
                 logging.debug(
                     f"Duplicate rule ID found with no 'overwrite' tag: {rule_id}. User must fix the rule manually.")
+                self.duplicate_ids.append({
+                    "id": rule_id, "file": os.path.basename(xml_file),
+                    "existing_file": existing.get("file", ""),
+                })
 
             else:
-                self.G.add_node(rule_id,
-                                groups=all_groups,
-                                description=rule_description,
-                                level=rule_level,
-                                file=os.path.basename(xml_file))
+                basename = os.path.basename(xml_file)
+                node_attrs: dict[str, Any] = {
+                    "groups": all_groups,
+                    "description": rule_description,
+                    "level": rule_level,
+                    "file": basename,
+                    "path": xml_file,
+                    "product": self.product_map.get(basename.lower()),
+                    "conditions": self.extract_conditions(element),
+                    "mitre": self.extract_mitre(element),
+                    "raw": self.rule_raw_xml(element),
+                }
+                for attr in RULE_ATTRS:
+                    val = element.get(attr)
+                    if val is not None:
+                        node_attrs[attr] = val
+                if self.source:
+                    node_attrs["source"] = self.source
+
+                self.G.add_node(rule_id, **node_attrs)
                 for group in all_groups:
                     self.group_membership[group].append(rule_id)
 
@@ -134,7 +233,7 @@ class GraphGenerator:
         for xml_file in xml_files:
             logging.info(f'Processing file: {xml_file}')
             try:
-                with open(xml_file, 'r', encoding=ENCODING) as f:
+                with open(xml_file, 'r', encoding=ENCODING, errors="replace") as f:
                     xml_content = f.read()
             except OSError as e:
                 logging.error(
@@ -144,9 +243,10 @@ class GraphGenerator:
             wrapped_content: str = self.wrap_with_root(xml_content)
 
             try:
-                sanitized = self.__remove_regex_field(wrapped_content)
+                sanitized, captured = self.__capture_unsafe_text(wrapped_content)
                 sanitized = self.__escape_amp(sanitized)
                 parsed_xml = ET.fromstring(sanitized)
+                self.__restore_placeholders(parsed_xml, captured)
                 root = parsed_xml
                 for child in root:
                     self.parse_groups_and_rules(child, [], xml_file)
@@ -174,7 +274,13 @@ class GraphGenerator:
                 for attr in ("level", "maxsize"):
                     if element.get(attr):
                         existing[attr] = element.get(attr)
-                existing["file"] = os.path.basename(ow_file)
+                basename = os.path.basename(ow_file)
+                existing["file"] = basename
+                existing["path"] = ow_file
+                existing["overwritten"] = True
+                existing["raw_overwrite"] = self.rule_raw_xml(element)
+                if self.product_map.get(basename.lower()):
+                    existing["product"] = self.product_map.get(basename.lower())
             else:
                 logging.warning(
                     f"Overwrite rule {rule_id} found with no base rule; skipping.")
@@ -202,33 +308,46 @@ class GraphGenerator:
 
         logging.info(f"Total nodes: {self.G.number_of_nodes()}")
         logging.info(
-            f"First-level children (connected to root): {len(list(self.G.successors("0")))}")
+            f"First-level children (connected to root): {len(list(self.G.successors('0')))}")
+
+        self.G.graph["duplicate_rule_ids"] = self.duplicate_ids
 
     def save_graph(self) -> None:
         try:
             output_path = self.graph_file
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            dirname = os.path.dirname(output_path)
+            if dirname:
+                os.makedirs(dirname, exist_ok=True)
             pickle.dump(self.G, open(output_path, 'wb'))
             logging.info(f"Graph saved to {output_path}")
         except Exception as e:
             logging.error(f"Error saving graph: {e}", exc_info=True)
 
-    def __remove_regex_field(self, xml_string: str) -> str:
+    def __capture_unsafe_text(self, xml_string: str) -> tuple[str, list[str]]:
         """
-        Sanitizes the XML string by removing the entire <regex>...</regex> block.
+        Replaces the content of tags that commonly hold regex patterns
+        (<regex>, <match>, <prematch>) with numbered placeholders so the
+        document parses even when patterns contain raw &, < or >. The captured
+        content is restored onto the parsed tree afterwards, preserving the
+        full rule definition instead of discarding it.
+        """
+        captured: list[str] = []
 
-        The user indicated the <regex> tag is not needed for future logic, making
-        removal the most straightforward and robust sanitization method.
-        """
-        # Regex to find the <regex> tag, its content (including newlines), and the closing </regex> tag.
-        # The 're.DOTALL' flag allows '.' to match newlines.
-        # The '?' makes the matching non-greedy (to match the inner-most tag).
-        # We are using a simple non-greedy match for content: (.*?)
-        # Since the content is the problem, removing the whole block is the fix.
-        sanitized_string = REGEX_FINDER.sub(
-            '',
-            xml_string)
-        return sanitized_string
+        def _repl(m: re.Match) -> str:
+            idx = len(captured)
+            captured.append(m.group(3))
+            attrs = m.group(2) or ""
+            return f"<{m.group(1)}{attrs}>{PLACEHOLDER_TPL.format(idx)}</{m.group(1)}>"
+
+        return UNSAFE_FINDER.sub(_repl, xml_string), captured
+
+    def __restore_placeholders(self, root: ET.Element, captured: list[str]) -> None:
+        if not captured:
+            return
+        for el in root.iter():
+            if el.text and "__RULEVIS_TXT_" in el.text:
+                el.text = PLACEHOLDER_RE.sub(
+                    lambda m: captured[int(m.group(1))], el.text)
 
     def __escape_amp(self, xml_string: str) -> str:
         sanitized_string = REGEX_AMP.sub("&amp;", xml_string)

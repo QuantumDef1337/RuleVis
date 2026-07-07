@@ -14,7 +14,7 @@ from internal.visualizer import create_app
 APP_NAME: Final[str] = 'rulevis'
 DESCRIPTION: Final[str] = f"{APP_NAME} is a Wazuh rule visualization platform."
 ENCODING: Final[str] = "utf-8"
-PORT: Final[int] = 5000
+DEFAULT_PORT: Final[int] = 5000
 
 # Precompiled regex to remove ANSI color/control sequences
 ANSI_ESCAPE_RE: re.Pattern[str] = re.compile(
@@ -45,9 +45,10 @@ class CustomFileHandler(logging.FileHandler):
 
 class Rulevis():
 
-    def __init__(self, paths: list[str]) -> None:
+    def __init__(self, paths: list[str], port: int = DEFAULT_PORT) -> None:
         self.__validate_paths(paths)
         self.__paths: list[str] = paths
+        self.__port: int = port
 
     def run(self) -> None:
         app = create_app(self.__paths)
@@ -57,13 +58,13 @@ class Rulevis():
             # Flask's built-in server prints its own "do not use in
             # production" warning — waitress is a real (if modest) WSGI
             # server: multi-threaded, no dev-reloader, safe to leave running.
-            logging.info("Starting server (waitress)...")
-            serve(app, port=PORT, threads=8)
+            logging.info(f"Starting server (waitress) on port {self.__port}...")
+            serve(app, port=self.__port, threads=8)
         except ImportError:
             logging.warning(
                 "waitress is not installed — falling back to Flask's development "
                 "server. Run 'pip install waitress' for a production-appropriate server.")
-            app.run(debug=False, use_reloader=False, port=PORT, threaded=True)
+            app.run(debug=False, use_reloader=False, port=self.__port, threaded=True)
 
     def __validate_paths(self, paths: list[str]) -> None:
         for path in paths:
@@ -73,7 +74,7 @@ class Rulevis():
                 sys.exit(1)
 
     def __open_browser(self) -> None:
-        new_url = f'http://localhost:{PORT}/'
+        new_url = f'http://localhost:{self.__port}/'
 
         if (webbrowser.get().name != 'gio'):
             webbrowser.open_new(new_url)
@@ -88,6 +89,11 @@ def main() -> None:
                         help="Path to the Wazuh rule directories. Comma-separated "
                              "multiple paths are accepted. Optional when paths or "
                              "Wazuh managers are already configured in the app.")
+    # Falls back to RULEVIS_PORT (handy for process managers like pm2/systemd
+    # that set env vars rather than CLI args), then DEFAULT_PORT.
+    parser.add_argument("--port", "-P", dest="port", required=False, type=int,
+                        default=int(os.environ.get("RULEVIS_PORT", DEFAULT_PORT)),
+                        help=f"Port to serve on (default: {DEFAULT_PORT}, or $RULEVIS_PORT if set).")
 
     args: argparse.Namespace = parser.parse_args()
     paths: list[str] = [p for p in str(args.path).split(',') if p != '']
@@ -96,7 +102,7 @@ def main() -> None:
     # Rule sources are now per-tenant (configured in-app after login), so there's
     # no single global config to sanity-check here; create_app() handles first-run
     # migration + bootstrap.
-    rulevis = Rulevis(paths)
+    rulevis = Rulevis(paths, port=args.port)
     rulevis.run()
 
 

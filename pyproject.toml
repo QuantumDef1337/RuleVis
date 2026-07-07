@@ -63,4 +63,9 @@ py-modules = ["rulevis"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"internal.static" = ["*.*"]
+# "*.*" alone only matches files directly inside internal/static/ — it does
+# NOT recurse into internal/static/dist/ (the built frontend Flask serves in
+# production), which silently produced installable wheels missing the UI
+# entirely. The explicit dist/* and dist/assets/* patterns fix that; dist/**/*
+# is added too in case a future frontend build ever nests assets deeper.
+"internal.static" = ["*.*", "dist/*", "dist/assets/*", "dist/**/*"]

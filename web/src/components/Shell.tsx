@@ -94,7 +94,7 @@ export default function Shell() {
               </div>
               <div className="user-roles" style={{ padding: '8px 12px 0' }}>
                 {isSuperAdmin && <span className="badge violet">super admin</span>}
-                {tenant && <span className="badge">{tenant.role}</span>}
+                {tenant && tenant.role !== 'super_admin' && <span className="badge">{tenant.role}</span>}
               </div>
               <div className="account-popover-sep" />
               <button className="account-popover-item" onClick={toggleTheme}>
@@ -115,7 +115,7 @@ export default function Shell() {
               <div className="user-name">{user?.display_name || user?.email}</div>
               <div className="user-roles">
                 {isSuperAdmin && <span className="badge violet">super admin</span>}
-                {tenant && <span className="badge">{tenant.role}</span>}
+                {tenant && tenant.role !== 'super_admin' && <span className="badge">{tenant.role}</span>}
               </div>
             </div>
             <IconChevronDown size={14} />
